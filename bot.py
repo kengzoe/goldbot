@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from flask import Flask, request
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -29,15 +30,16 @@ def home():
     return "Bot is running!"
 
 @app.route('/webhook', methods=['POST'])
-async def webhook():
+def webhook():
     if request.method == "POST":
         update = Update.de_json(request.get_json(force=True), application.bot)
-        await application.process_update(update)
+        asyncio.run(application.process_update(update))
     return "ok"
 
 @app.route('/set_webhook')
 def set_webhook():
-    bot = Bot(token=TELEGRAM_TOKEN)
-    webhook_url = f"{RENDER_URL}/webhook"
-    bot.set_webhook(url=webhook_url)
-    return f"Webhook set to {webhook_url}"
+    async def _set():
+        bot = Bot(token=TELEGRAM_TOKEN)
+        await bot.set_webhook(url=f"{RENDER_URL}/webhook")
+    asyncio.run(_set())
+    return f"Webhook set!"
