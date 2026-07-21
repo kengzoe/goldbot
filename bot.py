@@ -1,17 +1,7 @@
-import logging, random, requests, asyncio, sys, time, os
+import logging, random, requests, os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from flask import Flask
-import threading
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run_web():
-    app.run(host='0.0.0.0', port=10000)
 
 # Token from environment variable
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -22,10 +12,17 @@ STATS = {"total_signals": 0, "tp1_hits": 0, "tp2_hits": 0, "sl_hits": 0}
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Flask app
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
 def update_market_candles():
     global CANDLE_HISTORY
     url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
@@ -53,11 +50,11 @@ def process_smc_signals():
     bull, bear = r_closes[-1] > avg, r_closes[-1] < avg
     disp = abs(c2["close"] - c2["open"]) > ((c2["high"] - c2["low"]) * 0.5)
     if entry < equil:
-        if c3["low"] > c1["high"] and bull and disp: sig, reason, sl = "BUY", "Institutional FVG + Bullish Displacement", min(c1["low"], c2["low"]) - 1.0
+        if c3["low"] > c1["high"] and bull and disp: sig, reason, sl = "BUY", "FVG + Bullish Displacement", min(c1["low"], c2["low"]) - 1.0
         elif c3["close"] > c3["open"] and c2["close"] < c2["open"]: sig, reason, sl = "BUY", "Liquidity Sweep completed", c3["low"] - 1.5
     elif entry > equil:
-        if c3["high"] < c1["low"] and bear and disp: sig, reason, sl = "SELL", "Institutional FVG + Bearish Displacement", max(c1["high"], c2["high"]) + 1.0
-        elif (c3["high"] - max(c3["close"], c3["open"])) > (abs(c3["close"] - c3["open"]) * 2.5) and (c3["high"] >= major_res): sig, reason, sl = "SELL", "Bearish Mitigation / Order Block Touch", c3["high"] + 1.5
+        if c3["high"] < c1["low"] and bear and disp: sig, reason, sl = "SELL", "FVG + Bearish Displacement", max(c1["high"], c2["high"]) + 1.0
+        elif (c3["high"] - max(c3["close"], c3["open"])) > (abs(c3["close"] - c3["open"]) * 2.5) and (c3["high"] >= major_res): sig, reason, sl = "SELL", "Bearish Mitigation", c3["high"] + 1.5
     if sig:
         dist = max(abs(entry - sl), 3.0)
         sl = (entry - dist) if sig == "BUY" else (entry + dist)
@@ -74,15 +71,15 @@ async def monitor_active_telemetry(bot, price):
         if p["status"] == "PENDING":
             if (price <= p["entry"]) if p["type"] == "BUY" else (price >= p["entry"]):
                 p["status"] = "ACTIVE"
-                await bot.send_message(chat_id=CHAT_ID, text=f"POSITION EXECUTED: Entry at ${price:.2f}")
+                await bot.send_message(chat_id=CHAT_ID, text=f"POSITION EXECUTED at ${price:.2f}")
             surv.append(p); continue
         if p["type"] == "BUY":
-            if price <= p["sl"]: STATS["sl_hits"] += 1; await bot.send_message(chat_id=CHAT_ID, text=f"STOP LOSS HIT at ${p['sl']:.2f}")
+            if price <= p["sl"]: STATS["sl_hits"] += 1; await bot.send_message(chat_id=CHAT_ID, text=f"SL HIT at ${p['sl']:.2f}")
             elif price >= p["tp2"]: STATS["tp2_hits"] += 1; await bot.send_message(chat_id=CHAT_ID, text=f"TP2 CLEARED at ${p['tp2']:.2f}")
             elif price >= p["tp1"] and not p.get("tp1_hit"): p["tp1_hit"] = True; STATS["tp1_hits"] += 1; await bot.send_message(chat_id=CHAT_ID, text=f"TP1 HIT at ${p['tp1']:.2f}"); surv.append(p)
             else: surv.append(p)
         elif p["type"] == "SELL":
-            if price >= p["sl"]: STATS["sl_hits"] += 1; await bot.send_message(chat_id=CHAT_ID, text=f"STOP LOSS HIT at ${p['sl']:.2f}")
+            if price >= p["sl"]: STATS["sl_hits"] += 1; await bot.send_message(chat_id=CHAT_ID, text=f"SL HIT at ${p['sl']:.2f}")
             elif price <= p["tp2"]: STATS["tp2_hits"] += 1; await bot.send_message(chat_id=CHAT_ID, text=f"TP2 CLEARED at ${p['tp2']:.2f}")
             elif price <= p["tp1"] and not p.get("tp1_hit"): p["tp1_hit"] = True; STATS["tp1_hits"] += 1; await bot.send_message(chat_id=CHAT_ID, text=f"TP1 HIT at ${p['tp1']:.2f}"); surv.append(p)
             else: surv.append(p)
@@ -97,21 +94,19 @@ async def signal_loop(context: ContextTypes.DEFAULT_TYPE):
         sig = process_smc_signals()
         if sig:
             ACTIVE_POSITIONS.append(sig)
-            emoji = "BUY" if sig["type"] == "BUY" else "SELL"
-            await context.bot.send_message(chat_id=CHAT_ID, text=f"NEW {emoji} SIGNAL\nEntry: ${sig['entry']:.2f}\nSL: ${sig['sl']:.2f}\nTP1: ${sig['tp1']:.2f}\nTP2: ${sig['tp2']:.2f}\nReason: {sig['reason']}")
+            await context.bot.send_message(chat_id=CHAT_ID, text=f"NEW {sig['type']} SIGNAL\nEntry: ${sig['entry']:.2f}\nSL: ${sig['sl']:.2f}\nTP1: ${sig['tp1']:.2f}\nTP2: ${sig['tp2']:.2f}")
 
 async def report_callback(context: ContextTypes.DEFAULT_TYPE):
     global CHAT_ID, STATS
     if not CHAT_ID: return
     total_closed = STATS["tp1_hits"] + STATS["sl_hits"]
     win_rate = (STATS["tp1_hits"] / total_closed * 100) if total_closed > 0 else 0.0
-    report_msg = f"24H SUMMARY\nTotal Signals: {STATS['total_signals']}\nTP1: {STATS['tp1_hits']}\nTP2: {STATS['tp2_hits']}\nSL: {STATS['sl_hits']}\nWin Rate: {win_rate:.1f}%"
-    await context.bot.send_message(chat_id=CHAT_ID, text=report_msg)
+    await context.bot.send_message(chat_id=CHAT_ID, text=f"24H SUMMARY\nSignals: {STATS['total_signals']}\nTP1: {STATS['tp1_hits']}\nTP2: {STATS['tp2_hits']}\nSL: {STATS['sl_hits']}\nWin: {win_rate:.1f}%")
     STATS = {"total_signals": 0, "tp1_hits": 0, "tp2_hits": 0, "sl_hits": 0}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global CHAT_ID; CHAT_ID = update.effective_chat.id
-    await update.message.reply_text("Bot Ready. Commands: /start_signals /stop_signals /status /report /set_interval /set_risk")
+    await update.message.reply_text("Bot Ready. /start_signals /stop_signals /status /report")
 
 async def start_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global RUN_SIGNALS, CHAT_ID, PRICE_INTERVAL_SECONDS
@@ -131,44 +126,41 @@ async def stop_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Signals stopped")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global RUN_SIGNALS, PRICE_INTERVAL_SECONDS, RISK_REWARD_MULTIPLIER, CANDLE_HISTORY, ACTIVE_POSITIONS
-    await update.message.reply_text(f"Status: {'ACTIVE' if RUN_SIGNALS else 'IDLE'}\nInterval: {PRICE_INTERVAL_SECONDS}s\nRR: {RISK_REWARD_MULTIPLIER}x\nCandles: {len(CANDLE_HISTORY)}\nActive Trades: {len(ACTIVE_POSITIONS)}")
+    global RUN_SIGNALS, CANDLE_HISTORY, ACTIVE_POSITIONS
+    await update.message.reply_text(f"Status: {'ACTIVE' if RUN_SIGNALS else 'IDLE'}\nCandles: {len(CANDLE_HISTORY)}\nTrades: {len(ACTIVE_POSITIONS)}")
 
 async def manual_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global STATS
     total_closed = STATS["tp1_hits"] + STATS["sl_hits"]
     win_rate = (STATS["tp1_hits"] / total_closed * 100) if total_closed > 0 else 0.0
-    await update.message.reply_text(f"Signals: {STATS['total_signals']}\nTP1: {STATS['tp1_hits']}\nTP2: {STATS['tp2_hits']}\nSL: {STATS['sl_hits']}\nWin Rate: {win_rate:.1f}%")
+    await update.message.reply_text(f"Signals: {STATS['total_signals']}\nTP1: {STATS['tp1_hits']}\nTP2: {STATS['tp2_hits']}\nSL: {STATS['sl_hits']}\nWin: {win_rate:.1f}%")
 
 async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global PRICE_INTERVAL_SECONDS, RUN_SIGNALS
     if not context.args: await update.message.reply_text("Use: /set_interval 60"); return
-    try:
-        val = int(context.args[0])
-        if val < 10: await update.message.reply_text("Minimum 10s"); return
-        PRICE_INTERVAL_SECONDS = val
-        await update.message.reply_text(f"Interval set to {PRICE_INTERVAL_SECONDS}s")
-        if RUN_SIGNALS:
-            for j in context.job_queue.get_jobs_by_name("smc_job"): j.schedule_removal()
-            context.job_queue.run_repeating(signal_loop, interval=PRICE_INTERVAL_SECONDS, name="smc_job")
-    except: await update.message.reply_text("Numbers only")
+    val = int(context.args[0])
+    if val < 10: await update.message.reply_text("Min 10s"); return
+    PRICE_INTERVAL_SECONDS = val
+    if RUN_SIGNALS:
+        for j in context.job_queue.get_jobs_by_name("smc_job"): j.schedule_removal()
+        context.job_queue.run_repeating(signal_loop, interval=PRICE_INTERVAL_SECONDS, name="smc_job")
+    await update.message.reply_text(f"Interval: {val}s")
 
 async def set_risk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global RISK_REWARD_MULTIPLIER
     if not context.args: await update.message.reply_text("Use: /set_risk 2.0"); return
-    try:
-        val = float(context.args[0])
-        if val <= 0: await update.message.reply_text("Must be > 0"); return
-        RISK_REWARD_MULTIPLIER = val
-        await update.message.reply_text(f"Risk set to {RISK_REWARD_MULTIPLIER}x")
-    except: await update.message.reply_text("Numbers only")
+    val = float(context.args[0])
+    if val <= 0: await update.message.reply_text("Must be > 0"); return
+    RISK_REWARD_MULTIPLIER = val
+    await update.message.reply_text(f"Risk: {val}x")
 
-def main():
-    # Start web server in background
-    web_thread = threading.Thread(target=run_web)
-    web_thread.start()
-    
-    # Start bot
+# Start bot in background when app loads
+import asyncio
+import threading
+
+def start_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("start_signals", start_signals))
@@ -180,5 +172,6 @@ def main():
     logger.info("Bot starting...")
     app_bot.run_polling()
 
-if __name__ == "__main__":
-    main()
+# Start bot thread
+bot_thread = threading.Thread(target=start_bot)
+bot_thread.start()
