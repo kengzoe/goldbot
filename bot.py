@@ -1,6 +1,17 @@
 import logging, random, requests, asyncio, sys, time, os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from flask import Flask
+import threading
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web():
+    app.run(host='0.0.0.0', port=10000)
 
 # Token from environment variable
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -153,16 +164,21 @@ async def set_risk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: await update.message.reply_text("Numbers only")
 
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("start_signals", start_signals))
-    app.add_handler(CommandHandler("stop_signals", stop_signals))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("report", manual_report))
-    app.add_handler(CommandHandler("set_interval", set_interval))
-    app.add_handler(CommandHandler("set_risk", set_risk))
+    # Start web server in background
+    web_thread = threading.Thread(target=run_web)
+    web_thread.start()
+    
+    # Start bot
+    app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app_bot.add_handler(CommandHandler("start", start))
+    app_bot.add_handler(CommandHandler("start_signals", start_signals))
+    app_bot.add_handler(CommandHandler("stop_signals", stop_signals))
+    app_bot.add_handler(CommandHandler("status", status))
+    app_bot.add_handler(CommandHandler("report", manual_report))
+    app_bot.add_handler(CommandHandler("set_interval", set_interval))
+    app_bot.add_handler(CommandHandler("set_risk", set_risk))
     logger.info("Bot starting...")
-    app.run_polling()
+    app_bot.run_polling()
 
 if __name__ == "__main__":
     main()
