@@ -282,19 +282,17 @@ async def init_app():
     logger.info("Webhook set!")
 
 @app.route('/webhook', methods=['POST'])
-async def webhook():
-    await application.update_queue.put(
-        Update.de_json(request.get_json(force=True), application.bot)
-    )
+def webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    application.update_queue.put(update)
     return "ok"
 
-# Run init in a thread-safe way
+# Schedule init_app
 import asyncio
-try:
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        asyncio.ensure_future(init_app())
-    else:
-        loop.run_until_complete(init_app())
-except RuntimeError:
-    asyncio.run(init_app())
+def run_init():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(init_app())
+
+init_thread = threading.Thread(target=run_init, daemon=True)
+init_thread.start()
