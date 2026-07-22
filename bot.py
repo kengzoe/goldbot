@@ -117,9 +117,170 @@ def detect_fvg(candles):
             return "SELL"
     return None
 
+def detect_order_blocks(candles, lookback=10):
+    """Detect bullish and bearish order blocks"""
+    if len(candles) < lookback + 2:
+        return None, None
+    
+    bullish_ob = None
+    bearish_ob = None
+    
+    # Look for last bearish candle before big bullish move = bullish OB
+    for i in range(len(candles) - lookback, len(candles) - 1):
+        c = candles[i]
+        # Bearish candle
+        if c["close"] < c["open"]:
+            # Check if next candle is strongly bullish
+            if i + 1 < len(candles):
+                next_c = candles[i + 1]
+                if next_c["close"] > next_c["open"] and next_c["close"] > c["high"]:
+                    bullish_ob = {"high": c["high"], "low": c["low"], "index": i}
+        
+        # Bullish candle before big bearish move = bearish OB
+        if c["close"] > c["open"]:
+            if i + 1 < len(candles):
+                next_c = candles[i + 1]
+                if next_c["close"] < next_c["open"] and next_c["close"] < c["low"]:
+                    bearish_ob = {"high": c["high"], "low": c["low"], "index": i}
+    
+    return bullish_ob, bearish_ob
+
+def detect_choch(candles):
+    """Detect Change of Character - market structure break"""
+    if len(candles) < 10:
+        return None
+    
+    # Get swing highs and lows
+    highs = [c["high"] for c in candles[-10:]]
+    lows = [c["low"] for c in candles[-10:]]
+    
+    # Find recent swing points
+    swing_highs = []
+    swing_lows = []
+    
+    for i in range(1, len(highs) - 1):
+        if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+            swing_highs.append({"price": highs[i], "index": i})
+        if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+            swing_lows.append({"price": lows[i], "index": i})
+    
+    if len(swing_highs) < 2 or len(swing_lows) < 2:
+        return None
+    
+    # Bullish CHoCH: Break above previous swing high after downtrend
+    current = candles[-1]["close"]
+    prev_high = swing_highs[-2]["price"] if len(swing_highs) >= 2 else None
+    prev_low = swing_lows[-2]["price"] if len(swing_lows) >= 2 else None
+    
+    # Check for bullish CHoCH
+    if prev_high and current > prev_high:
+        # Confirm it was in downtrend before (lower highs)
+        if len(swing_highs) >= 3 and swing_highs[-1]["price"] < swing_highs[-2]["price"]:
+            return "BULLISH"
+
 def is_london_or_ny_session():
     hour = datetime.now(timezone.utc).hour
     return (8 <= hour < 17) or (13 <= hour < 22)
+
+def detect_order_blocks(candles, lookback=10):
+    """Detect bullish and bearish order blocks"""
+    if len(candles) < lookback + 2:
+        return None, None
+    
+    bullish_ob = None
+    bearish_ob = None
+    
+    for i in range(len(candles) - lookback, len(candles) - 1):
+        if i + 1 >= len(candles):
+            continue
+        c = candles[i]
+        next_c = candles[i + 1]
+        
+        if c["close"] < c["open"]:
+            if next_c["close"] > next_c["open"] and next_c["close"] > c["high"]:
+                bullish_ob = {"high": c["high"], "low": c["low"]}
+        
+        if c["close"] > c["open"]:
+            if next_c["close"] < next_c["open"] and next_c["close"] < c["low"]:
+                bearish_ob = {"high": c["high"], "low": c["low"]}
+    
+    return bullish_ob, bearish_ob
+
+def detect_choch(candles):
+    """Detect Change of Character"""
+    if len(candles) < 10:
+        return None
+    
+    highs = [c["high"] for c in candles[-10:]]
+    lows = [c["low"] for c in candles[-10:]]
+    
+    swing_highs = []
+    swing_lows = []
+    
+    for i in range(1, len(highs) - 1):
+        if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+            swing_highs.append(highs[i])
+        if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+            swing_lows.append(lows[i])
+    
+    if len(swing_highs) < 2 or len(swing_lows) < 2:
+        return None
+    
+    current = candles[-1]["close"]
+    
+    if len(swing_highs) >= 2 and current > swing_highs[-2]:
+        return "BULLISH"
+    if len(swing_lows) >= 2 and current < swing_lows[-2]:
+        return "BEARISH"
+    
+    return None
+
+def price_at_order_block(price, ob):
+    """Check if price is at order block"""
+    if not ob:
+        return False
+    return ob["low"] <= price <= ob["high"]
+
+def score_signal(fvg, trend_strength, atr, near_swing, body_ratio, choch, at_ob):
+    """Score signal from 0-100"""
+    score = 0
+    
+    if choch:
+        score += 25
+    if fvg:
+        score += 20
+    if at_ob:
+        score += 20
+    if trend_strength > 0.3:
+        score += 15
+    elif trend_strength > 0.1:
+        score += 10
+    else:
+        score += 5
+    if 10 <= atr <= 25:
+        score += 10
+    elif 5 <= atr <= 30:
+        score += 5
+    else:
+        score += 3
+    if near_swing:
+        score += 5
+    if body_ratio > 0.7:
+        score += 5
+    elif body_ratio > 0.5:
+        score += 3
+    else:
+        score += 1
+    
+    if score >= 85: grade = "A+"
+    elif score >= 75: grade = "A"
+    elif score >= 65: grade = "B+"
+    elif score >= 55: grade = "B"
+    elif score >= 45: grade = "C+"
+    elif score >= 35: grade = "C"
+    else: grade = "D"
+    
+    return grade, score
 
 def process_signals():
     global RISK_REWARD_MULTIPLIER, STATS
@@ -146,25 +307,59 @@ def process_signals():
     fvg = detect_fvg(candles)
     swing_high, swing_low = find_swing_levels(candles)
     
-    sig, reason = None, ""
+    sig = None
+reason = ""
+grade = "C"
+score_val = 0
+
+# Get order blocks and CHoCH
+bullish_ob, bearish_ob = detect_order_blocks(candles)
+choch = detect_choch(candles)
+
+# Calculate metrics
+if ema_20 > 0:
+    trend_strength = abs(ema_20 - ema_50) / ema_50
+else:
+    trend_strength = 0
+
+last = candles[-1]
+body_ratio = abs(last["close"] - last["open"]) / (last["high"] - last["low"]) if (last["high"] - last["low"]) > 0 else 0
+near_swing = abs(current_price - swing_high) < atr or abs(current_price - swing_low) < atr
+
+# Check if at order block
+at_ob = price_at_order_block(current_price, bullish_ob if fvg == "BUY" else bearish_ob, 
+                              "BULLISH" if fvg == "BUY" else "BEARISH")
+
+if fvg == "BUY" and uptrend and current_price < swing_high:
+    sig = "BUY"
+    grade, score_val = score_signal("BUY", True, trend_strength, atr, near_swing, body_ratio, 
+                                     choch == "BULLISH", at_ob)
     
-    if fvg == "BUY" and uptrend and current_price < swing_high:
-        sig = "BUY"
-        reason = f"FVG + Uptrend | ATR:{atr:.1f}"
-        sl = current_price - stop_distance
-        tp1 = current_price + (stop_distance * RISK_REWARD_MULTIPLIER)
-        tp2 = current_price + (stop_distance * RISK_REWARD_MULTIPLIER * 2.0)
-    elif fvg == "SELL" and downtrend and current_price > swing_low:
-        sig = "SELL"
-        reason = f"FVG + Downtrend | ATR:{atr:.1f}"
-        sl = current_price + stop_distance
-        tp1 = current_price - (stop_distance * RISK_REWARD_MULTIPLIER)
-        tp2 = current_price - (stop_distance * RISK_REWARD_MULTIPLIER * 2.0)
+    # Build detailed reason
+    reasons = ["FVG"]
+    if choch == "BULLISH": reasons.append("CHoCH")
+    if at_ob: reasons.append("OB Touch")
+    if uptrend: reasons.append("Uptrend")
+    reason = " + ".join(reasons) + f" | ATR:{atr:.1f}"
     
-    if sig:
-        STATS["total_signals"] += 1
-        return {"type": sig, "reason": reason, "entry": current_price, "sl": sl, "tp1": tp1, "tp2": tp2, "status": "PENDING"}
-    return None
+    sl = current_price - stop_distance
+    tp1 = current_price + (stop_distance * RISK_REWARD_MULTIPLIER)
+    tp2 = current_price + (stop_distance * RISK_REWARD_MULTIPLIER * 2.0)
+    
+elif fvg == "SELL" and downtrend and current_price > swing_low:
+    sig = "SELL"
+    grade, score_val = score_signal("SELL", True, trend_strength, atr, near_swing, body_ratio,
+                                     choch == "BEARISH", at_ob)
+    
+    reasons = ["FVG"]
+    if choch == "BEARISH": reasons.append("CHoCH")
+    if at_ob: reasons.append("OB Touch")
+    if downtrend: reasons.append("Downtrend")
+    reason = " + ".join(reasons) + f" | ATR:{atr:.1f}"
+    
+    sl = current_price + stop_distance
+    tp1 = current_price - (stop_distance * RISK_REWARD_MULTIPLIER)
+    tp2 = current_price - (stop_distance * RISK_REWARD_MULTIPLIER * 2.0)
 
 async def monitor_positions(bot, price):
     global ACTIVE_POSITIONS, CHAT_ID, STATS
@@ -216,33 +411,38 @@ async def signal_loop(context: ContextTypes.DEFAULT_TYPE):
         if sig:
             ACTIVE_POSITIONS.append(sig)
             
-            # Format signal message
-            msg = (
-                f"📊 NEW {sig['type']} SIGNAL\n"
+            # Get grade and score
+            grade = sig.get("grade", "C")
+            score = sig.get("score", 0)
+            
+            # VIP channel - instant signal
+            vip_msg = (
+                f"{'🟢' if sig['type'] == 'BUY' else '🔴'} {grade} {sig['type']} SIGNAL\n"
+                f"Score: {score}/100\n"
                 f"Entry: ${sig['entry']:.2f}\n"
                 f"SL: ${sig['sl']:.2f}\n"
                 f"TP1: ${sig['tp1']:.2f}\n"
                 f"TP2: ${sig['tp2']:.2f}\n"
-                f"Reason: {sig['reason']}\n\n"
-                f"⏰ {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
+                f"Reason: {sig['reason']}\n"
+                f"⏰ {datetime.now(timezone.utc).strftime('%H:%M UTC')}\n"
+                f"🔒 VIP Instant Signal"
             )
-            
-            # VIP channel - instant signal
-            vip_msg = msg + "\n🔒 VIP Instant Signal"
             await context.bot.send_message(chat_id=VIP_CHANNEL_ID, text=vip_msg)
             
-            # Free channel - delayed (just the signal without timestamps)
+            # Free channel - delayed
             free_msg = (
-                f"📊 {sig['type']} SIGNAL\n"
+                f"{grade} {sig['type']} SIGNAL\n"
+                f"Score: {score}/100\n"
                 f"Entry: ${sig['entry']:.2f}\n"
                 f"SL: ${sig['sl']:.2f}\n"
                 f"TP1: ${sig['tp1']:.2f}\n\n"
-                f"⚡ Want instant signals? Join VIP: /join_vip"
+                f"⚡ Full details in VIP: /join_vip"
             )
             await context.bot.send_message(chat_id=FREE_CHANNEL_ID, text=free_msg)
             
-            # Also send to the user who started the bot
-            await context.bot.send_message(chat_id=CHAT_ID, text=msg)
+            # Also send to user who started the bot
+            await context.bot.send_message(chat_id=CHAT_ID, text=vip_msg)
+            
 async def report_callback(context: ContextTypes.DEFAULT_TYPE):
     global CHAT_ID, STATS
     if not CHAT_ID: return
