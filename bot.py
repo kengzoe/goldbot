@@ -275,27 +275,25 @@ application.add_handler(CommandHandler("report", manual_report))
 application.add_handler(CommandHandler("set_interval", set_interval))
 application.add_handler(CommandHandler("set_risk", set_risk))
 
-# Initialize application
-async def init_app():
-    await application.initialize()
-    await application.bot.set_webhook(url="https://goldbot-0xwy.onrender.com/webhook")
-    logger.info("Webhook set!")
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
     import asyncio
+    update = Update.de_json(request.get_json(force=True), application.bot)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    # Initialize and process in the same loop
+    loop.run_until_complete(application.initialize())
     loop.run_until_complete(application.process_update(update))
     return "ok"
 
-# Schedule init_app
+# Initialize and set webhook on startup
 import asyncio
-def run_init():
+def startup():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(init_app())
+    loop.run_until_complete(application.initialize())
+    loop.run_until_complete(application.bot.set_webhook(url="https://goldbot-0xwy.onrender.com/webhook"))
+    logger.info("Webhook set!")
 
-init_thread = threading.Thread(target=run_init, daemon=True)
-init_thread.start()
+startup_thread = threading.Thread(target=startup, daemon=True)
+startup_thread.start()
