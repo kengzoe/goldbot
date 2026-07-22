@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY")
 CHAT_ID, RUN_SIGNALS = None, False
-PRICE_INTERVAL_SECONDS = 60
+PRICE_INTERVAL_SECONDS = 900
 RISK_REWARD_MULTIPLIER = 2.0
 MIN_STOP_POINTS = 15
 ACTIVE_POSITIONS = []
@@ -122,7 +122,7 @@ def is_london_or_ny_session():
 def process_signals():
     global RISK_REWARD_MULTIPLIER, STATS
     candles = fetch_real_candles()
-    if not candles or len(candles) < 20:
+    if not candles or len(candles) < 10:
         return None
     if not is_london_or_ny_session():
         return None
