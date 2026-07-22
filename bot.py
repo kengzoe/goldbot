@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY")
 CHAT_ID, RUN_SIGNALS = None, False
+FREE_CHANNEL_ID = -1004410090098
+VIP_CHANNEL_ID = -1004416190238
 PRICE_INTERVAL_SECONDS = 900
 RISK_REWARD_MULTIPLIER = 2.0
 MIN_STOP_POINTS = 15
@@ -201,17 +203,46 @@ async def monitor_positions(bot, price):
 
 async def signal_loop(context: ContextTypes.DEFAULT_TYPE):
     global RUN_SIGNALS, CHAT_ID, ACTIVE_POSITIONS
-    if not RUN_SIGNALS or not CHAT_ID: return
+    if not RUN_SIGNALS or not CHAT_ID:
+        return
+    
     candles = fetch_real_candles()
     if candles:
         live = candles[-1]["close"]
-        if ACTIVE_POSITIONS: await monitor_positions(context.bot, live)
+        if ACTIVE_POSITIONS:
+            await monitor_positions(context.bot, live)
+        
         sig = process_signals()
         if sig:
             ACTIVE_POSITIONS.append(sig)
-            await context.bot.send_message(chat_id=CHAT_ID,
-                text=f"📊 NEW {sig['type']} SIGNAL\nEntry: ${sig['entry']:.2f}\nSL: ${sig['sl']:.2f}\nTP1: ${sig['tp1']:.2f}\nTP2: ${sig['tp2']:.2f}\n{sig['reason']}")
-
+            
+            # Format signal message
+            msg = (
+                f"📊 NEW {sig['type']} SIGNAL\n"
+                f"Entry: ${sig['entry']:.2f}\n"
+                f"SL: ${sig['sl']:.2f}\n"
+                f"TP1: ${sig['tp1']:.2f}\n"
+                f"TP2: ${sig['tp2']:.2f}\n"
+                f"Reason: {sig['reason']}\n\n"
+                f"⏰ {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
+            )
+            
+            # VIP channel - instant signal
+            vip_msg = msg + "\n🔒 VIP Instant Signal"
+            await context.bot.send_message(chat_id=VIP_CHANNEL_ID, text=vip_msg)
+            
+            # Free channel - delayed (just the signal without timestamps)
+            free_msg = (
+                f"📊 {sig['type']} SIGNAL\n"
+                f"Entry: ${sig['entry']:.2f}\n"
+                f"SL: ${sig['sl']:.2f}\n"
+                f"TP1: ${sig['tp1']:.2f}\n\n"
+                f"⚡ Want instant signals? Join VIP: /join_vip"
+            )
+            await context.bot.send_message(chat_id=FREE_CHANNEL_ID, text=free_msg)
+            
+            # Also send to the user who started the bot
+            await context.bot.send_message(chat_id=CHAT_ID, text=msg)
 async def report_callback(context: ContextTypes.DEFAULT_TYPE):
     global CHAT_ID, STATS
     if not CHAT_ID: return
@@ -280,6 +311,17 @@ async def set_risk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     RISK_REWARD_MULTIPLIER = val
     await update.message.reply_text(f"✅ RR: {val}x")
 
+async def join_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🔒 *XAUUSD VIP Signals*\n\n"
+        "Get instant signals before free channel!\n\n"
+        "💰 *$25/month*\n\n"
+        "💎 Pay with USDT (TRC20):\n"
+        "`TFEYT12uggMhmhncqFSc8SAFzpdz6YfS2j`\n\n"
+        "✅ After payment, send screenshot to @pipzoe",
+        parse_mode="Markdown"
+    )
+
 # Build application  
 application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
@@ -289,6 +331,7 @@ application.add_handler(CommandHandler("status", status))
 application.add_handler(CommandHandler("report", manual_report))
 application.add_handler(CommandHandler("set_interval", set_interval))
 application.add_handler(CommandHandler("set_risk", set_risk))
+application.add_handler(CommandHandler("join_vip", join_vip))
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
