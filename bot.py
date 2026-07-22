@@ -34,55 +34,34 @@ last_fetch_time = 0
 def fetch_real_candles():
     global cached_candles, last_fetch_time
     now = datetime.now().timestamp()
-    if cached_candles and (now - last_fetch_time) < 300:
+    if cached_candles and (now - last_fetch_time) < 60:
         return cached_candles
     
-    # Try multiple free sources
-    urls = [
-        "https://api.gold-api.com/price/XAU",
-        "https://www.goldapi.io/api/XAU/USD",
-    ]
+    api_key = os.getenv("TWELVE_DATA_KEY")
+    url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=1min&outputsize=30&apikey={api_key}"
     
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
-    # First try gold-api for current price + build candles from history
     try:
-        # Get current price
-        res = requests.get("https://api.gold-api.com/price/XAU", headers=headers, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            live = data.get("price")
-            if live:
-                # Build synthetic candles from real price
-                if not cached_candles:
-                    # Create initial candles
-                    for i in range(30):
-                        offset = random.uniform(-20, 20)
-                        cached_candles.append({
-                            "open": live + offset + random.uniform(-5, 5),
-                            "high": live + offset + random.uniform(5, 15),
-                            "low": live + offset + random.uniform(-15, -5),
-                            "close": live + offset + random.uniform(-3, 3),
-                            "date": f"2026-07-{22-i:02d}"
-                        })
-                else:
-                    # Add new candle
-                    prev = cached_candles[-1]["close"]
-                    cached_candles.append({
-                        "open": prev,
-                        "high": max(live, prev) + random.uniform(0, 10),
-                        "low": min(live, prev) - random.uniform(0, 10),
-                        "close": live,
-                        "date": datetime.now().strftime("%Y-%m-%d")
-                    })
-                    if len(cached_candles) > 30:
-                        cached_candles.pop(0)
-                
-                last_fetch_time = now
-                logger.info(f"Fetched price: ${live:.2f}, candles: {len(cached_candles)}")
-                return cached_candles
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        
+        if data.get("status") == "ok" and "values" in data:
+            candles = []
+            for bar in reversed(data["values"]):
+                candles.append({
+                    "open": float(bar["open"]),
+                    "high": float(bar["high"]),
+                    "low": float(bar["low"]),
+                    "close": float(bar["close"]),
+                    "date": bar["datetime"]
+                })
+            cached_candles = candles
+            last_fetch_time = now
+            logger.info(f"Fetched {len(candles)} real candles. Price: ${candles[-1]['close']:.2f}")
+            return candles
+        else:
+            logger.error(f"Twelve Data error: {data}")
     except Exception as e:
-        logger.error(f"gold-api error: {e}")
+        logger.error(f"API error: {e}")
     
     return cached_candles
 
