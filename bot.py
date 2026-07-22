@@ -4,7 +4,7 @@ import requests
 import threading
 import numpy as np
 from datetime import datetime, timezone
-from flask import Flask
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
