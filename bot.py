@@ -245,8 +245,16 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global RUN_SIGNALS, ACTIVE_POSITIONS, STATS
     candles = fetch_real_candles()
     price = candles[-1]["close"] if candles else "N/A"
-    await update.message.reply_text(f"📊 State: {'ACTIVE' if RUN_SIGNALS else 'IDLE'}\nPrice: ${price}\nTrades: {len(ACTIVE_POSITIONS)}\nLosses: {STATS['daily_losses']}/{MAX_DAILY_LOSSES}")
-
+    candle_count = len(candles) if candles else 0
+    session = is_london_or_ny_session()
+    await update.message.reply_text(
+        f"📊 State: {'ACTIVE' if RUN_SIGNALS else 'IDLE'}\n"
+        f"Price: ${price}\n"
+        f"Candles: {candle_count}/30\n"
+        f"Trades: {len(ACTIVE_POSITIONS)}\n"
+        f"Losses: {STATS['daily_losses']}/{MAX_DAILY_LOSSES}\n"
+        f"Session: {'LIVE' if session else 'CLOSED'}"
+    )
 async def manual_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global STATS
     total = STATS["tp1_hits"] + STATS["tp2_hits"] + STATS["sl_hits"]
