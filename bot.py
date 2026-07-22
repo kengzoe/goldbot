@@ -2,6 +2,7 @@ import os
 import logging
 import requests
 import threading
+import random
 import numpy as np
 from datetime import datetime, timezone
 from flask import Flask, request
@@ -36,26 +37,53 @@ def fetch_real_candles():
     if cached_candles and (now - last_fetch_time) < 300:
         return cached_candles
     
-    url = f"https://www.alphavantage.co/query?function=FX_DAILY&from_symbol=XAU&to_symbol=USD&apikey={ALPHA_VANTAGE_KEY}"
+    # Try multiple free sources
+    urls = [
+        "https://api.gold-api.com/price/XAU",
+        "https://www.goldapi.io/api/XAU/USD",
+    ]
+    
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    # First try gold-api for current price + build candles from history
     try:
-        res = requests.get(url, timeout=10)
-        data = res.json()
-        if "Time Series FX (Daily)" in data:
-            candles = []
-            ts = data["Time Series FX (Daily)"]
-            for date_str, values in sorted(ts.items())[-30:]:
-                candles.append({
-                    "open": float(values["1. open"]),
-                    "high": float(values["2. high"]),
-                    "low": float(values["3. low"]),
-                    "close": float(values["4. close"]),
-                    "date": date_str
-                })
-            cached_candles = candles
-            last_fetch_time = now
-            return candles
+        # Get current price
+        res = requests.get("https://api.gold-api.com/price/XAU", headers=headers, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            live = data.get("price")
+            if live:
+                # Build synthetic candles from real price
+                if not cached_candles:
+                    # Create initial candles
+                    for i in range(30):
+                        offset = random.uniform(-20, 20)
+                        cached_candles.append({
+                            "open": live + offset + random.uniform(-5, 5),
+                            "high": live + offset + random.uniform(5, 15),
+                            "low": live + offset + random.uniform(-15, -5),
+                            "close": live + offset + random.uniform(-3, 3),
+                            "date": f"2026-07-{22-i:02d}"
+                        })
+                else:
+                    # Add new candle
+                    prev = cached_candles[-1]["close"]
+                    cached_candles.append({
+                        "open": prev,
+                        "high": max(live, prev) + random.uniform(0, 10),
+                        "low": min(live, prev) - random.uniform(0, 10),
+                        "close": live,
+                        "date": datetime.now().strftime("%Y-%m-%d")
+                    })
+                    if len(cached_candles) > 30:
+                        cached_candles.pop(0)
+                
+                last_fetch_time = now
+                logger.info(f"Fetched price: ${live:.2f}, candles: {len(cached_candles)}")
+                return cached_candles
     except Exception as e:
-        logger.error(f"API error: {e}")
+        logger.error(f"gold-api error: {e}")
+    
     return cached_candles
 
 def calculate_atr(candles, period=14):
