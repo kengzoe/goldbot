@@ -297,7 +297,7 @@ def process_signals():
     ema_20 = calculate_ema(closes, 20)
     ema_50 = calculate_ema(closes, 50)
     uptrend = ema_20 > ema_50 and current_price > ema_20
-    downtrend = ema_20 < ema_50 and current_price < ema_20
+    downtrend = ema_20 < ema_50 and current_price < ema_50
     
     if not uptrend and not downtrend:
         return None
@@ -307,60 +307,61 @@ def process_signals():
     fvg = detect_fvg(candles)
     swing_high, swing_low = find_swing_levels(candles)
     
+    # Get order blocks and CHoCH
+    bullish_ob, bearish_ob = detect_order_blocks(candles)
+    choch = detect_choch(candles)
+    
     sig = None
-reason = ""
-grade = "C"
-score_val = 0
-
-# Get order blocks and CHoCH
-bullish_ob, bearish_ob = detect_order_blocks(candles)
-choch = detect_choch(candles)
-
-# Calculate metrics
-if ema_20 > 0:
-    trend_strength = abs(ema_20 - ema_50) / ema_50
-else:
-    trend_strength = 0
-
-last = candles[-1]
-body_ratio = abs(last["close"] - last["open"]) / (last["high"] - last["low"]) if (last["high"] - last["low"]) > 0 else 0
-near_swing = abs(current_price - swing_high) < atr or abs(current_price - swing_low) < atr
-
-# Check if at order block
-at_ob = price_at_order_block(current_price, bullish_ob if fvg == "BUY" else bearish_ob, 
-                              "BULLISH" if fvg == "BUY" else "BEARISH")
-
-if fvg == "BUY" and uptrend and current_price < swing_high:
-    sig = "BUY"
-    grade, score_val = score_signal("BUY", True, trend_strength, atr, near_swing, body_ratio, 
-                                     choch == "BULLISH", at_ob)
+    reason = ""
+    grade = "C"
+    score_val = 0
     
-    # Build detailed reason
-    reasons = ["FVG"]
-    if choch == "BULLISH": reasons.append("CHoCH")
-    if at_ob: reasons.append("OB Touch")
-    if uptrend: reasons.append("Uptrend")
-    reason = " + ".join(reasons) + f" | ATR:{atr:.1f}"
+    # Calculate metrics
+    if ema_20 > 0:
+        trend_strength = abs(ema_20 - ema_50) / ema_50
+    else:
+        trend_strength = 0
     
-    sl = current_price - stop_distance
-    tp1 = current_price + (stop_distance * RISK_REWARD_MULTIPLIER)
-    tp2 = current_price + (stop_distance * RISK_REWARD_MULTIPLIER * 2.0)
+    last = candles[-1]
+    rng = last["high"] - last["low"]
+    body_ratio = abs(last["close"] - last["open"]) / rng if rng > 0 else 0
+    near_swing = abs(current_price - swing_high) < atr or abs(current_price - swing_low) < atr
     
-elif fvg == "SELL" and downtrend and current_price > swing_low:
-    sig = "SELL"
-    grade, score_val = score_signal("SELL", True, trend_strength, atr, near_swing, body_ratio,
-                                     choch == "BEARISH", at_ob)
+    if fvg == "BUY" and uptrend and current_price < swing_high:
+        at_ob = price_at_order_block(current_price, bullish_ob)
+        grade, score_val = score_signal(True, trend_strength, atr, near_swing, body_ratio, choch == "BULLISH", at_ob)
+        
+        reasons = ["FVG"]
+        if choch == "BULLISH": reasons.append("CHoCH")
+        if at_ob: reasons.append("OB Touch")
+        reasons.append("Uptrend")
+        reason = " + ".join(reasons) + f" | ATR:{atr:.1f}"
+        
+        sig = "BUY"
+        sl = current_price - stop_distance
+        tp1 = current_price + (stop_distance * RISK_REWARD_MULTIPLIER)
+        tp2 = current_price + (stop_distance * RISK_REWARD_MULTIPLIER * 2.0)
+        
+    elif fvg == "SELL" and downtrend and current_price > swing_low:
+        at_ob = price_at_order_block(current_price, bearish_ob)
+        grade, score_val = score_signal(True, trend_strength, atr, near_swing, body_ratio, choch == "BEARISH", at_ob)
+        
+        reasons = ["FVG"]
+        if choch == "BEARISH": reasons.append("CHoCH")
+        if at_ob: reasons.append("OB Touch")
+        reasons.append("Downtrend")
+        reason = " + ".join(reasons) + f" | ATR:{atr:.1f}"
+        
+        sig = "SELL"
+        sl = current_price + stop_distance
+        tp1 = current_price - (stop_distance * RISK_REWARD_MULTIPLIER)
+        tp2 = current_price - (stop_distance * RISK_REWARD_MULTIPLIER * 2.0)
     
-    reasons = ["FVG"]
-    if choch == "BEARISH": reasons.append("CHoCH")
-    if at_ob: reasons.append("OB Touch")
-    if downtrend: reasons.append("Downtrend")
-    reason = " + ".join(reasons) + f" | ATR:{atr:.1f}"
+    if sig:
+        STATS["total_signals"] += 1
+        return {"type": sig, "reason": reason, "entry": current_price, "sl": sl, "tp1": tp1, "tp2": tp2, "status": "PENDING", "grade": grade, "score": score_val}
+    return None
     
-    sl = current_price + stop_distance
-    tp1 = current_price - (stop_distance * RISK_REWARD_MULTIPLIER)
-    tp2 = current_price - (stop_distance * RISK_REWARD_MULTIPLIER * 2.0)
-
 async def monitor_positions(bot, price):
     global ACTIVE_POSITIONS, CHAT_ID, STATS
     surv = []
