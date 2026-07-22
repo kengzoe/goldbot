@@ -265,7 +265,7 @@ async def set_risk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     RISK_REWARD_MULTIPLIER = val
     await update.message.reply_text(f"✅ RR: {val}x")
 
-# Build application
+# Build application  
 application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("start_signals", start_signals))
@@ -275,16 +275,26 @@ application.add_handler(CommandHandler("report", manual_report))
 application.add_handler(CommandHandler("set_interval", set_interval))
 application.add_handler(CommandHandler("set_risk", set_risk))
 
-# Start polling only when app is loaded (gunicorn will import this module)
-import atexit
-import time
+# Initialize application
+async def init_app():
+    await application.initialize()
+    await application.bot.set_webhook(url="https://goldbot-0xwy.onrender.com/webhook")
+    logger.info("Webhook set!")
 
-def start_bot():
-    time.sleep(2)  # Wait for gunicorn to be ready
-    logger.info("Starting bot polling...")
-    application.run_polling()
+@app.route('/webhook', methods=['POST'])
+async def webhook():
+    await application.update_queue.put(
+        Update.de_json(request.get_json(force=True), application.bot)
+    )
+    return "ok"
 
-bot_thread = threading.Thread(target=start_bot, daemon=True)
-bot_thread.start()
-
-atexit.register(lambda: application.stop())
+# Run init in a thread-safe way
+import asyncio
+try:
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        asyncio.ensure_future(init_app())
+    else:
+        loop.run_until_complete(init_app())
+except RuntimeError:
+    asyncio.run(init_app())
