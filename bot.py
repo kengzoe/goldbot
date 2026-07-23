@@ -4,6 +4,7 @@ import requests
 import threading
 import random
 import numpy as np
+import encodings.idna
 from datetime import datetime, timezone
 from flask import Flask, request
 from telegram import Update
@@ -540,7 +541,6 @@ def webhook():
     update = Update.de_json(request.get_json(force=True), application.bot)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    # Initialize and process in the same loop
     loop.run_until_complete(application.initialize())
     loop.run_until_complete(application.process_update(update))
     return "ok"
