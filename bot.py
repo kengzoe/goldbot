@@ -23,7 +23,7 @@ RISK_REWARD_MULTIPLIER = 2.0
 MIN_STOP_POINTS = 15
 ACTIVE_POSITIONS = []
 STATS = {"total_signals": 0, "tp1_hits": 0, "tp2_hits": 0, "sl_hits": 0, "daily_losses": 0}
-MAX_DAILY_LOSSES = 3
+MAX_DAILY_LOSSES = 6
 
 app = Flask(__name__)
 
@@ -109,12 +109,12 @@ def detect_fvg(candles):
     if c1["high"] < c3["low"] and c3["close"] > c3["open"]:
         body = abs(c3["close"] - c3["open"])
         rng = c3["high"] - c3["low"]
-        if rng > 0 and (body / rng) > 0.6:
+        if rng > 0 and (body / rng) > 0.3:  # Changed from 0.4
             return "BUY"
     if c1["low"] > c3["high"] and c3["close"] < c3["open"]:
         body = abs(c3["close"] - c3["open"])
         rng = c3["high"] - c3["low"]
-        if rng > 0 and (body / rng) > 0.6:
+        if rng > 0 and (body / rng) > 0.3:  # Changed from 0.4
             return "SELL"
     return None
 
@@ -286,7 +286,7 @@ def score_signal(fvg, trend_strength, atr, near_swing, body_ratio, choch, at_ob)
 def process_signals():
     global RISK_REWARD_MULTIPLIER, STATS
     candles = fetch_real_candles()
-    if not candles or len(candles) < 10:
+    if not candles or len(candles) < 5:
         return None
     if not is_london_or_ny_session():
         return None
@@ -328,7 +328,7 @@ def process_signals():
     body_ratio = abs(last["close"] - last["open"]) / rng if rng > 0 else 0
     near_swing = abs(current_price - swing_high) < atr or abs(current_price - swing_low) < atr
     
-    if fvg == "BUY" and uptrend and current_price < swing_high:
+    if fvg == "BUY" and uptrend:
         at_ob = price_at_order_block(current_price, bullish_ob)
         grade, score_val = score_signal(True, trend_strength, atr, near_swing, body_ratio, choch == "BULLISH", at_ob)
         
@@ -343,7 +343,7 @@ def process_signals():
         tp1 = current_price + (stop_distance * RISK_REWARD_MULTIPLIER)
         tp2 = current_price + (stop_distance * RISK_REWARD_MULTIPLIER * 2.0)
         
-    elif fvg == "SELL" and downtrend and current_price > swing_low:
+    elif fvg == "SELL" and downtrend:
         at_ob = price_at_order_block(current_price, bearish_ob)
         grade, score_val = score_signal(True, trend_strength, atr, near_swing, body_ratio, choch == "BEARISH", at_ob)
         
