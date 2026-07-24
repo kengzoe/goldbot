@@ -1,10 +1,13 @@
+# Fix for Python 3.14
+import encodings.idna
+
 import os
+import json
 import logging
+import random
 import requests
 import threading
-import random
 import numpy as np
-import encodings.idna
 from datetime import datetime, timezone
 from flask import Flask, request
 from telegram import Update
@@ -14,16 +17,16 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=lo
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY")
+TWELVE_DATA_KEY = os.getenv("TWELVE_DATA_KEY")
 CHAT_ID, RUN_SIGNALS = None, False
-FREE_CHANNEL_ID = -1004410090098
-VIP_CHANNEL_ID = -1004416190238
 PRICE_INTERVAL_SECONDS = 900
 RISK_REWARD_MULTIPLIER = 2.0
 MIN_STOP_POINTS = 15
 ACTIVE_POSITIONS = []
 STATS = {"total_signals": 0, "tp1_hits": 0, "tp2_hits": 0, "sl_hits": 0, "daily_losses": 0}
 MAX_DAILY_LOSSES = 6
+FREE_CHANNEL_ID = -1004410090098
+VIP_CHANNEL_ID = -1004416190238
 
 app = Flask(__name__)
 
@@ -40,13 +43,10 @@ def fetch_real_candles():
     if cached_candles and (now - last_fetch_time) < 60:
         return cached_candles
     
-    api_key = os.getenv("TWELVE_DATA_KEY")
-    url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=1min&outputsize=30&apikey={api_key}"
-    
+    url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=15min&outputsize=30&apikey={TWELVE_DATA_KEY}"
     try:
         res = requests.get(url, timeout=10)
         data = res.json()
-        
         if data.get("status") == "ok" and "values" in data:
             candles = []
             for bar in reversed(data["values"]):
@@ -61,11 +61,8 @@ def fetch_real_candles():
             last_fetch_time = now
             logger.info(f"Fetched {len(candles)} real candles. Price: ${candles[-1]['close']:.2f}")
             return candles
-        else:
-            logger.error(f"Twelve Data error: {data}")
     except Exception as e:
         logger.error(f"API error: {e}")
-    
     return cached_candles
 
 def calculate_atr(candles, period=14):
@@ -109,170 +106,70 @@ def detect_fvg(candles):
     if c1["high"] < c3["low"] and c3["close"] > c3["open"]:
         body = abs(c3["close"] - c3["open"])
         rng = c3["high"] - c3["low"]
-        if rng > 0 and (body / rng) > 0.3:  # Changed from 0.4
+        if rng > 0 and (body / rng) > 0.3:
             return "BUY"
     if c1["low"] > c3["high"] and c3["close"] < c3["open"]:
         body = abs(c3["close"] - c3["open"])
         rng = c3["high"] - c3["low"]
-        if rng > 0 and (body / rng) > 0.3:  # Changed from 0.4
+        if rng > 0 and (body / rng) > 0.3:
             return "SELL"
     return None
 
 def detect_order_blocks(candles, lookback=10):
-    """Detect bullish and bearish order blocks"""
     if len(candles) < lookback + 2:
         return None, None
-    
-    bullish_ob = None
-    bearish_ob = None
-    
-    # Look for last bearish candle before big bullish move = bullish OB
-    for i in range(len(candles) - lookback, len(candles) - 1):
-        c = candles[i]
-        # Bearish candle
-        if c["close"] < c["open"]:
-            # Check if next candle is strongly bullish
-            if i + 1 < len(candles):
-                next_c = candles[i + 1]
-                if next_c["close"] > next_c["open"] and next_c["close"] > c["high"]:
-                    bullish_ob = {"high": c["high"], "low": c["low"], "index": i}
-        
-        # Bullish candle before big bearish move = bearish OB
-        if c["close"] > c["open"]:
-            if i + 1 < len(candles):
-                next_c = candles[i + 1]
-                if next_c["close"] < next_c["open"] and next_c["close"] < c["low"]:
-                    bearish_ob = {"high": c["high"], "low": c["low"], "index": i}
-    
-    return bullish_ob, bearish_ob
-
-def detect_choch(candles):
-    """Detect Change of Character - market structure break"""
-    if len(candles) < 10:
-        return None
-    
-    # Get swing highs and lows
-    highs = [c["high"] for c in candles[-10:]]
-    lows = [c["low"] for c in candles[-10:]]
-    
-    # Find recent swing points
-    swing_highs = []
-    swing_lows = []
-    
-    for i in range(1, len(highs) - 1):
-        if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
-            swing_highs.append({"price": highs[i], "index": i})
-        if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
-            swing_lows.append({"price": lows[i], "index": i})
-    
-    if len(swing_highs) < 2 or len(swing_lows) < 2:
-        return None
-    
-    # Bullish CHoCH: Break above previous swing high after downtrend
-    current = candles[-1]["close"]
-    prev_high = swing_highs[-2]["price"] if len(swing_highs) >= 2 else None
-    prev_low = swing_lows[-2]["price"] if len(swing_lows) >= 2 else None
-    
-    # Check for bullish CHoCH
-    if prev_high and current > prev_high:
-        # Confirm it was in downtrend before (lower highs)
-        if len(swing_highs) >= 3 and swing_highs[-1]["price"] < swing_highs[-2]["price"]:
-            return "BULLISH"
-
-def is_london_or_ny_session():
-    hour = datetime.now(timezone.utc).hour
-    return (8 <= hour < 17) or (13 <= hour < 22)
-
-def detect_order_blocks(candles, lookback=10):
-    """Detect bullish and bearish order blocks"""
-    if len(candles) < lookback + 2:
-        return None, None
-    
-    bullish_ob = None
-    bearish_ob = None
-    
+    bullish_ob, bearish_ob = None, None
     for i in range(len(candles) - lookback, len(candles) - 1):
         if i + 1 >= len(candles):
             continue
         c = candles[i]
         next_c = candles[i + 1]
-        
-        if c["close"] < c["open"]:
-            if next_c["close"] > next_c["open"] and next_c["close"] > c["high"]:
-                bullish_ob = {"high": c["high"], "low": c["low"]}
-        
-        if c["close"] > c["open"]:
-            if next_c["close"] < next_c["open"] and next_c["close"] < c["low"]:
-                bearish_ob = {"high": c["high"], "low": c["low"]}
-    
+        if c["close"] < c["open"] and next_c["close"] > next_c["open"] and next_c["close"] > c["high"]:
+            bullish_ob = {"high": c["high"], "low": c["low"]}
+        if c["close"] > c["open"] and next_c["close"] < next_c["open"] and next_c["close"] < c["low"]:
+            bearish_ob = {"high": c["high"], "low": c["low"]}
     return bullish_ob, bearish_ob
 
 def detect_choch(candles):
-    """Detect Change of Character"""
     if len(candles) < 10:
         return None
-    
     highs = [c["high"] for c in candles[-10:]]
     lows = [c["low"] for c in candles[-10:]]
-    
-    swing_highs = []
-    swing_lows = []
-    
+    swing_highs, swing_lows = [], []
     for i in range(1, len(highs) - 1):
         if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
             swing_highs.append(highs[i])
         if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
             swing_lows.append(lows[i])
-    
     if len(swing_highs) < 2 or len(swing_lows) < 2:
         return None
-    
     current = candles[-1]["close"]
-    
     if len(swing_highs) >= 2 and current > swing_highs[-2]:
         return "BULLISH"
     if len(swing_lows) >= 2 and current < swing_lows[-2]:
         return "BEARISH"
-    
     return None
 
 def price_at_order_block(price, ob):
-    """Check if price is at order block"""
     if not ob:
         return False
     return ob["low"] <= price <= ob["high"]
 
 def score_signal(fvg, trend_strength, atr, near_swing, body_ratio, choch, at_ob):
-    """Score signal from 0-100"""
     score = 0
-    
-    if choch:
-        score += 25
-    if fvg:
-        score += 20
-    if at_ob:
-        score += 20
-    if trend_strength > 0.3:
-        score += 15
-    elif trend_strength > 0.1:
-        score += 10
-    else:
-        score += 5
-    if 10 <= atr <= 25:
-        score += 10
-    elif 5 <= atr <= 30:
-        score += 5
-    else:
-        score += 3
-    if near_swing:
-        score += 5
-    if body_ratio > 0.7:
-        score += 5
-    elif body_ratio > 0.5:
-        score += 3
-    else:
-        score += 1
-    
+    if choch: score += 25
+    if fvg: score += 20
+    if at_ob: score += 20
+    if trend_strength > 0.3: score += 15
+    elif trend_strength > 0.1: score += 10
+    else: score += 5
+    if 10 <= atr <= 25: score += 10
+    elif 5 <= atr <= 30: score += 5
+    else: score += 3
+    if near_swing: score += 5
+    if body_ratio > 0.7: score += 5
+    elif body_ratio > 0.5: score += 3
+    else: score += 1
     if score >= 85: grade = "A+"
     elif score >= 75: grade = "A"
     elif score >= 65: grade = "B+"
@@ -280,8 +177,11 @@ def score_signal(fvg, trend_strength, atr, near_swing, body_ratio, choch, at_ob)
     elif score >= 45: grade = "C+"
     elif score >= 35: grade = "C"
     else: grade = "D"
-    
     return grade, score
+
+def is_london_or_ny_session():
+    hour = datetime.now(timezone.utc).hour
+    return (8 <= hour < 17) or (13 <= hour < 22)
 
 def process_signals():
     global RISK_REWARD_MULTIPLIER, STATS
@@ -308,16 +208,11 @@ def process_signals():
     fvg = detect_fvg(candles)
     swing_high, swing_low = find_swing_levels(candles)
     
-    # Get order blocks and CHoCH
     bullish_ob, bearish_ob = detect_order_blocks(candles)
     choch = detect_choch(candles)
     
-    sig = None
-    reason = ""
-    grade = "C"
-    score_val = 0
+    sig, reason, grade, score_val = None, "", "C", 0
     
-    # Calculate metrics
     if ema_20 > 0:
         trend_strength = abs(ema_20 - ema_50) / ema_50
     else:
@@ -326,18 +221,16 @@ def process_signals():
     last = candles[-1]
     rng = last["high"] - last["low"]
     body_ratio = abs(last["close"] - last["open"]) / rng if rng > 0 else 0
-    near_swing = abs(current_price - swing_high) < atr or abs(current_price - swing_low) < atr
+    near_swing = abs(current_price - swing_high) < atr or abs(current_price - swing_low) < atr if swing_high and swing_low else False
     
     if fvg == "BUY" and uptrend:
         at_ob = price_at_order_block(current_price, bullish_ob)
         grade, score_val = score_signal(True, trend_strength, atr, near_swing, body_ratio, choch == "BULLISH", at_ob)
-        
         reasons = ["FVG"]
         if choch == "BULLISH": reasons.append("CHoCH")
         if at_ob: reasons.append("OB Touch")
         reasons.append("Uptrend")
         reason = " + ".join(reasons) + f" | ATR:{atr:.1f}"
-        
         sig = "BUY"
         sl = current_price - stop_distance
         tp1 = current_price + (stop_distance * RISK_REWARD_MULTIPLIER)
@@ -346,13 +239,11 @@ def process_signals():
     elif fvg == "SELL" and downtrend:
         at_ob = price_at_order_block(current_price, bearish_ob)
         grade, score_val = score_signal(True, trend_strength, atr, near_swing, body_ratio, choch == "BEARISH", at_ob)
-        
         reasons = ["FVG"]
         if choch == "BEARISH": reasons.append("CHoCH")
         if at_ob: reasons.append("OB Touch")
         reasons.append("Downtrend")
         reason = " + ".join(reasons) + f" | ATR:{atr:.1f}"
-        
         sig = "SELL"
         sl = current_price + stop_distance
         tp1 = current_price - (stop_distance * RISK_REWARD_MULTIPLIER)
@@ -362,7 +253,7 @@ def process_signals():
         STATS["total_signals"] += 1
         return {"type": sig, "reason": reason, "entry": current_price, "sl": sl, "tp1": tp1, "tp2": tp2, "status": "PENDING", "grade": grade, "score": score_val}
     return None
-    
+
 async def monitor_positions(bot, price):
     global ACTIVE_POSITIONS, CHAT_ID, STATS
     surv = []
@@ -412,12 +303,9 @@ async def signal_loop(context: ContextTypes.DEFAULT_TYPE):
         sig = process_signals()
         if sig:
             ACTIVE_POSITIONS.append(sig)
-            
-            # Get grade and score
             grade = sig.get("grade", "C")
             score = sig.get("score", 0)
             
-            # VIP channel - instant signal
             vip_msg = (
                 f"{'🟢' if sig['type'] == 'BUY' else '🔴'} {grade} {sig['type']} SIGNAL\n"
                 f"Score: {score}/100\n"
@@ -431,7 +319,6 @@ async def signal_loop(context: ContextTypes.DEFAULT_TYPE):
             )
             await context.bot.send_message(chat_id=VIP_CHANNEL_ID, text=vip_msg)
             
-            # Free channel - delayed
             free_msg = (
                 f"{grade} {sig['type']} SIGNAL\n"
                 f"Score: {score}/100\n"
@@ -441,10 +328,8 @@ async def signal_loop(context: ContextTypes.DEFAULT_TYPE):
                 f"⚡ Full details in VIP: /join_vip"
             )
             await context.bot.send_message(chat_id=FREE_CHANNEL_ID, text=free_msg)
-            
-            # Also send to user who started the bot
             await context.bot.send_message(chat_id=CHAT_ID, text=vip_msg)
-            
+
 async def report_callback(context: ContextTypes.DEFAULT_TYPE):
     global CHAT_ID, STATS
     if not CHAT_ID: return
@@ -456,16 +341,16 @@ async def report_callback(context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global CHAT_ID
     CHAT_ID = update.effective_chat.id
-    await update.message.reply_text("🟢 XAUUSD SMC Bot\n/start_signals /stop_signals /status /report /set_interval /set_risk")
+    await update.message.reply_text("🟢 XAUUSD SMC Bot\n/start_signals /stop_signals /status /report /set_interval /set_risk /join_vip")
 
 async def start_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global RUN_SIGNALS, CHAT_ID, PRICE_INTERVAL_SECONDS
+    global RUN_SIGNALS, CHAT_ID
     CHAT_ID = update.effective_chat.id
     if RUN_SIGNALS: await update.message.reply_text("Already running"); return
     RUN_SIGNALS = True
     context.job_queue.run_repeating(signal_loop, interval=PRICE_INTERVAL_SECONDS, name="smc_job")
     context.job_queue.run_repeating(report_callback, interval=86400, first=86400, name="report_job")
-    await update.message.reply_text(f"🚀 Scanning every {PRICE_INTERVAL_SECONDS}s")
+    await update.message.reply_text(f"🚀 Scanning every 15min")
 
 async def stop_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global RUN_SIGNALS
@@ -478,16 +363,10 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global RUN_SIGNALS, ACTIVE_POSITIONS, STATS
     candles = fetch_real_candles()
     price = candles[-1]["close"] if candles else "N/A"
-    candle_count = len(candles) if candles else 0
+    count = len(candles) if candles else 0
     session = is_london_or_ny_session()
-    await update.message.reply_text(
-        f"📊 State: {'ACTIVE' if RUN_SIGNALS else 'IDLE'}\n"
-        f"Price: ${price}\n"
-        f"Candles: {candle_count}/30\n"
-        f"Trades: {len(ACTIVE_POSITIONS)}\n"
-        f"Losses: {STATS['daily_losses']}/{MAX_DAILY_LOSSES}\n"
-        f"Session: {'LIVE' if session else 'CLOSED'}"
-    )
+    await update.message.reply_text(f"📊 State: {'ACTIVE' if RUN_SIGNALS else 'IDLE'}\nPrice: ${price}\nCandles: {count}/30\nTrades: {len(ACTIVE_POSITIONS)}\nLosses: {STATS['daily_losses']}/{MAX_DAILY_LOSSES}\nSession: {'LIVE' if session else 'CLOSED'}")
+
 async def manual_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global STATS
     total = STATS["tp1_hits"] + STATS["tp2_hits"] + STATS["sl_hits"]
@@ -524,7 +403,6 @@ async def join_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# Build application  
 application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("start_signals", start_signals))
@@ -534,6 +412,13 @@ application.add_handler(CommandHandler("report", manual_report))
 application.add_handler(CommandHandler("set_interval", set_interval))
 application.add_handler(CommandHandler("set_risk", set_risk))
 application.add_handler(CommandHandler("join_vip", join_vip))
+
+RENDER_URL = os.getenv("RENDER_URL", "https://goldbot-0xwy.onrender.com")
+
+async def init_bot():
+    await application.initialize()
+    await application.bot.set_webhook(url=f"{RENDER_URL}/webhook")
+    logger.info("Webhook set!")
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -545,14 +430,10 @@ def webhook():
     loop.run_until_complete(application.process_update(update))
     return "ok"
 
-# Initialize and set webhook on startup
-import asyncio
-def startup():
+def run_init():
+    import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(application.initialize())
-    loop.run_until_complete(application.bot.set_webhook(url="https://goldbot-0xwy.onrender.com/webhook"))
-    logger.info("Webhook set!")
+    loop.run_until_complete(init_bot())
 
-startup_thread = threading.Thread(target=startup, daemon=True)
-startup_thread.start()
+threading.Thread(target=run_init, daemon=True).start()
