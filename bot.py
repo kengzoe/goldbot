@@ -467,30 +467,11 @@ application.add_handler(CommandHandler("set_interval", set_interval))
 application.add_handler(CommandHandler("set_risk", set_risk))
 application.add_handler(CommandHandler("join_vip", join_vip))
 
-RENDER_URL = os.getenv("RENDER_URL", "https://goldbot-0xwy.onrender.com")
+# Start bot with polling (no webhook, no event loop issues)
+def start_bot():
+    application.run_polling()
 
-async def init_bot():
-    await application.initialize()
-    await application.bot.set_webhook(url=f"{RENDER_URL}/webhook")
-    logger.info("Webhook set!")
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    import asyncio
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(application.initialize())
-    loop.run_until_complete(application.process_update(update))
-    return "ok"
-
-def run_init():
-    import asyncio
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(init_bot())
-
-threading.Thread(target=run_init, daemon=True).start()
+threading.Thread(target=start_bot, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
