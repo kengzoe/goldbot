@@ -491,3 +491,7 @@ def run_init():
     loop.run_until_complete(init_bot())
 
 threading.Thread(target=run_init, daemon=True).start()
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", "10000"))
+    app.run(host="0.0.0.0", port=port)
