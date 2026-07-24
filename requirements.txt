@@ -3,4 +3,4 @@ requests==2.31.0
 flask[async]>=3.0.0
 gunicorn>=22.0.0
 pandas>=2.0.0
-numpy>=1.24.0
+numpy>=1.24.0,<2.0.0
