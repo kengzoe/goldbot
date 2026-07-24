@@ -480,8 +480,14 @@ def run_bot():
     loop.run_until_complete(start_bot())
     loop.run_forever()
 
-threading.Thread(target=run_bot, daemon=True).start()
-
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "10000"))
-    app.run(host="0.0.0.0", port=port, use_reloader=False)
+    # Start Flask in a thread first
+    def run_flask():
+        port = int(os.getenv("PORT", "10000"))
+        app.run(host="0.0.0.0", port=port, use_reloader=False)
+    
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Run bot in main thread
+    import asyncio
+    asyncio.run(start_bot())
