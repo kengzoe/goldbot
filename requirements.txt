@@ -1,4 +1,4 @@
-python-telegram-bot>=21.0
+python-telegram-bot[job-queue]>=21.0
 requests==2.31.0
 flask[async]>=3.0.0
 gunicorn>=22.0.0
