@@ -68,7 +68,6 @@ def fetch_real_candles():
     return cached_candles
 
 def check_1h_trend():
-    """Check 1-hour trend for multi-timeframe confirmation"""
     api_key = os.getenv("TWELVE_DATA_KEY")
     url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=1h&outputsize=20&apikey={api_key}"
     try:
@@ -450,7 +449,7 @@ async def join_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔒 *XAUUSD VIP Signals*\n\n"
         "Get instant signals before free channel!\n\n"
         "💰 *$25/month*\n\n"
-        "💎  Pay with USDT (TRC20):\n"
+        "💎 Pay with USDT (TRC20):\n"
         "`TFEYT12uggMhmhncqFSc8SAFzpdz6YfS2j`\n\n"
         "✅ After payment, send screenshot to @pipzoe",
         parse_mode="Markdown"
@@ -467,12 +466,22 @@ application.add_handler(CommandHandler("set_interval", set_interval))
 application.add_handler(CommandHandler("set_risk", set_risk))
 application.add_handler(CommandHandler("join_vip", join_vip))
 
-# Start bot with polling (no webhook, no event loop issues)
-def start_bot():
-    application.run_polling()
+# Initialize and start bot with its own event loop
+async def start_bot():
+    await application.initialize()
+    await application.bot.delete_webhook()
+    await application.start()
+    logger.info("Bot polling started!")
 
-threading.Thread(target=start_bot, daemon=True).start()
+def run_bot():
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_bot())
+    loop.run_forever()
+
+threading.Thread(target=run_bot, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
