@@ -466,28 +466,13 @@ application.add_handler(CommandHandler("set_interval", set_interval))
 application.add_handler(CommandHandler("set_risk", set_risk))
 application.add_handler(CommandHandler("join_vip", join_vip))
 
-# Initialize and start bot with its own event loop
-async def start_bot():
-    await application.initialize()
-    await application.bot.delete_webhook()
-    await application.start()
-    logger.info("Bot polling started!")
-
-def run_bot():
-    import asyncio
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(start_bot())
-    loop.run_forever()
-
 if __name__ == "__main__":
-    # Start Flask in a thread first
+    # Start Flask in a daemon thread for Render health checks
     def run_flask():
         port = int(os.getenv("PORT", "10000"))
         app.run(host="0.0.0.0", port=port, use_reloader=False)
     
     threading.Thread(target=run_flask, daemon=True).start()
     
-    # Run bot in main thread
-    import asyncio
-    asyncio.run(start_bot())
+    # Run bot polling in the main thread (this keeps the process alive)
+    application.run_polling()
